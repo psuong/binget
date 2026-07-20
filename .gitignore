@@ -1,11 +1,8 @@
 /bin
 /obj
 
-config.toml
+*.toml
 *.zip
 *.binlog
-dnSpy/
-lua/
-omnisharp/
-slang/
-tracy/
+.vs
+*.log
