@@ -1,42 +1,63 @@
 ﻿using ConsoleAppFramework;
 using ZLogger;
 using Microsoft.Extensions.Logging;
-using System.IO;
-using Tomlyn;
 using BinGet.Data;
-using Cysharp.IO;
 using System.Threading.Tasks;
-using System.Text;
+using System.Collections.Generic;
+using System.IO;
 
 namespace BinGet;
 
 public class Commands {
 
     private readonly ILogger<Commands> logger;
-    private BinGetConfig binGetConfig;
 
     public Commands(ILogger<Commands> logger) {
         this.logger = logger;
     }
 
-    [Command("")]
-    public async Task ParseConfig(string config) {
-        if (!File.Exists(config)) {
-            throw new FileNotFoundException($"The config file: {config} does not exist!");
-        }
-        using Utf8StreamReader streamReader = new Utf8StreamReader(config, FileOpenMode.Throughput);
-        byte[] text = await streamReader.ReadToEndAsync();
-        binGetConfig = TomlSerializer.Deserialize<BinGetConfig>(Encoding.UTF8.GetString(text), TomlBinGetConfigContext.Default);
-        logger.ZLogInformation($"{binGetConfig}");
-    }
-
     [Command("install")]
-    public void Install() {
+    public async Task Install(string config) {
+        BinGetConfig toml = await BinGetConfig.Load(config);
+        if (!Directory.Exists(toml.Destination)) {
+            logger.ZLogInformation($"Creating the directory at path {toml.Destination}");
+            Directory.CreateDirectory(toml.Destination);
+        }
+        
+        Dictionary<string, RepositoryConfig>.Enumerator it = toml.Repositories.GetEnumerator();
+        while (it.MoveNext()) {
+            (string packageName, RepositoryConfig _) = it.Current;
+            string packagePath = Path.Join(toml.Destination, packageName);
+        }
     }
 
+    /// <summary>
+    /// Removes any local packages that are not listed in the config file. Your config file is effectively your primary list.
+    /// </summary>
+    /// <param name="config">The configuration toml file that lists the packages.</param>
+    /// <param name="updatePath">Updates the path variables.</param>
     [Command("clean")]
-    public void Clean() {
-        logger.ZLogInformation($"Cleaning");
+    public async Task Clean(string config, bool updatePath) {
+        BinGetConfig toml = await BinGetConfig.Load(config);
+        if (!Directory.Exists(toml.Destination)) {
+            logger.ZLogInformation($"Creating the directory at path {toml.Destination}");
+            Directory.CreateDirectory(toml.Destination);
+        }
+        
+        HashSet<string> packagePaths = [.. Directory.GetDirectories(toml.Destination)];
+        Dictionary<string, RepositoryConfig>.Enumerator it = toml.Repositories.GetEnumerator();
+        while (it.MoveNext()) {
+            (string packageName, RepositoryConfig _) = it.Current;
+            string packagePath = Path.Join(toml.Destination, packageName);
+            packagePaths.Remove(packagePath);
+        }
+
+        HashSet<string>.Enumerator remainingIt = packagePaths.GetEnumerator();
+        while (remainingIt.MoveNext()) {
+            logger.ZLogInformation($"Removing package at: {remainingIt.Current}");
+            Directory.Delete(remainingIt.Current);
+            // TODO: Update the path variables
+        }
     }
 }
 

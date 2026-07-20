@@ -1,5 +1,9 @@
+﻿using Cysharp.IO;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
+using System.Threading.Tasks;
+using Tomlyn;
 using Tomlyn.Serialization;
 
 namespace BinGet.Data;
@@ -26,6 +30,15 @@ public sealed class BinGetConfig {
                 .AppendLine(it.Current.Value.ToString());
         }
         return sb.ToString();
+    }
+
+    public static async Task<BinGetConfig> Load(string path) {
+        if (!File.Exists(path)) {
+            throw new FileNotFoundException($"The config file: {path} does not exist!");
+        }
+        using Utf8StreamReader streamReader = new Utf8StreamReader(path, FileOpenMode.Throughput);
+        byte[] text = await streamReader.ReadToEndAsync();
+        return TomlSerializer.Deserialize<BinGetConfig>(Encoding.UTF8.GetString(text), TomlBinGetConfigContext.Default);
     }
 }
 
