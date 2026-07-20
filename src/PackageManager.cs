@@ -32,10 +32,12 @@ public class PackageManager {
             if (regex.IsMatch(name)) {
                 logger.ZLogInformation($"Found asset {name}");
 
-                asset.GetProperty("digest");
                 packageInfo = new PackageInfo(
                     name,
-                    asset.GetProperty("browser_download_url").GetString());
+                    asset.GetProperty("browser_download_url").GetString(),
+                    asset.GetProperty("digest").GetString(),
+                    jsonDoc.RootElement.GetProperty("tag_name").GetString());
+                logger.ZLogInformation($"Package Info: {packageInfo}");
                 return true;
             }
         }
@@ -78,9 +80,6 @@ public class PackageManager {
                 logger.ZLogCritical($"Failed to find asset for {packageName}");
                 return;
             }
-
-            JsonElement digestElement = jsonDoc.RootElement.GetProperty("digest");
-            logger.ZLogInformation($"Digest: {digestElement.GetString()}");
 
             using var downloadResponse = await httpClient.GetAsync(
                 packageInfo.DownloadUrl,
