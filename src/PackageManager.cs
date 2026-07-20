@@ -9,6 +9,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System;
 
 namespace BinGet;
 
@@ -40,6 +41,39 @@ public class PackageManager {
         return false;
     }
 
+    private async Task DownloadPackage(HttpClient httpClient, BinGetConfig config, string packageName, RepositoryConfig repositoryConfig) {
+        var url = $"{config.Url}{repositoryConfig.Id}/releases/latest";
+        logger.ZLogInformation($"Downloading from: {url}");
+
+        var response = await httpClient.GetStringAsync(url);
+        using var jsonDoc = JsonDocument.Parse(response);
+
+        if (!TryGetPackageUrl(
+                jsonDoc,
+                repositoryConfig.TargetPattern,
+                packageName,
+                out var fileName,
+                out var downloadUrl)) {
+            logger.ZLogCritical($"Failed to find asset for {packageName}");
+            return;
+        }
+
+        using var downloadResponse = await httpClient.GetAsync(
+            downloadUrl,
+            HttpCompletionOption.ResponseHeadersRead);
+        downloadResponse.EnsureSuccessStatusCode();
+
+        var zipPath = Path.Combine(config.Destination, fileName);
+        await using var input = await downloadResponse.Content.ReadAsStreamAsync();
+        await using var output = File.Create(zipPath);
+        using var bufferScope = new ArrayPoolScope<byte>(BufferSize);
+
+        int bytesRead = 0;
+        while ((bytesRead = await input.ReadAsync(bufferScope.AsMemory())) > 0) {
+            await output.WriteAsync(bufferScope.AsMemory()[..bytesRead]);
+        }
+    }
+
     [Command("install")]
     public async Task Install(string config) {
         var toml = await BinGetConfig.Load(config);
@@ -50,46 +84,16 @@ public class PackageManager {
 
         using var httpClient = new HttpClient();
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(MozillaAgent);
-
-        var ct = new CancellationToken();
+        var tasks = new List<Task>(toml.Repositories.Count);
 
         var it = toml.Repositories.GetEnumerator();
         while (it.MoveNext()) {
             (var packageName, var repositoryConfig) = it.Current;
             var packagePath = Path.Join(toml.Destination, packageName);
-            var url = $"{toml.Url}{repositoryConfig.Id}/releases/latest";
-
-            var response = await httpClient.GetStringAsync(url);
-            using var jsonDoc = JsonDocument.Parse(response);
-            logger.ZLogInformation($"Downloading from: {url}");
-
-            if (TryGetPackageUrl(
-                jsonDoc,
-                it.Current.Value.TargetPattern,
-                packageName,
-                out var fileName,
-                out var downloadUrl)) {
-
-                using var downloadResponse = await httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseContentRead);
-                if (downloadResponse.EnsureSuccessStatusCode().IsSuccessStatusCode) {
-                    var totalBytes = downloadResponse.Content.Headers.ContentLength ?? -1;
-                    var bytesRead = 0;
-                    long totalRead = 0;
-
-                    using var contentStream = await downloadResponse.Content.ReadAsStreamAsync();
-                    using var bufferScope = new ArrayPoolScope(BufferSize);
-                    var zipPath = Path.Combine(toml.Destination, fileName);
-
-                    using var fileStream = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None, BufferSize, true);
-                    while ((bytesRead = await contentStream.ReadAsync(bufferScope.AsMemory(), ct)) > 0) {
-                        await fileStream.WriteAsync(bufferScope.AsReadonlyMemory(), ct);
-                        totalRead += bytesRead;
-                    }
-                }
-            } else {
-                logger.ZLogCritical($"Failed to download the {fileName} from {downloadUrl}");
-            }
+            tasks.Add(DownloadPackage(httpClient, toml, packageName, repositoryConfig));
         }
+
+        await Task.WhenAll(tasks);
     }
 
     /// <summary>
