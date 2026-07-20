@@ -4,7 +4,7 @@ using Tomlyn.Serialization;
 
 namespace BinGet.Data;
 
-public sealed class Config {
+public sealed class BinGetConfig {
     [TomlPropertyName("url")]
     public string Url { get; set; } = string.Empty;
     [TomlPropertyName("destination")]
@@ -40,5 +40,5 @@ public sealed class RepositoryConfig {
     }
 }
 
-[TomlSerializable(typeof(Config))]
-internal partial class TomlConfigContext : TomlSerializerContext { }
+[TomlSerializable(typeof(BinGetConfig))]
+internal partial class TomlBinGetConfigContext : TomlSerializerContext { }

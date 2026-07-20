@@ -1,6 +1,5 @@
 ﻿using ConsoleAppFramework;
 using ZLogger;
-using System;
 using Microsoft.Extensions.Logging;
 using System.IO;
 using Tomlyn;
@@ -14,15 +13,12 @@ namespace BinGet;
 public class Commands {
 
     private readonly ILogger<Commands> logger;
+    private BinGetConfig binGetConfig;
 
     public Commands(ILogger<Commands> logger) {
         this.logger = logger;
     }
 
-    /// <summary>
-    /// Parses the toml config file.
-    /// </summary>
-    /// <param name="config">-c, The configuration file to load.</param>
     [Command("")]
     public async Task ParseConfig(string config) {
         if (!File.Exists(config)) {
@@ -30,8 +26,17 @@ public class Commands {
         }
         using Utf8StreamReader streamReader = new Utf8StreamReader(config, FileOpenMode.Throughput);
         byte[] text = await streamReader.ReadToEndAsync();
-        Config output = TomlSerializer.Deserialize<Config>(Encoding.UTF8.GetString(text), TomlConfigContext.Default);
-        logger.ZLogInformation($"{output}");
+        binGetConfig = TomlSerializer.Deserialize<BinGetConfig>(Encoding.UTF8.GetString(text), TomlBinGetConfigContext.Default);
+        logger.ZLogInformation($"{binGetConfig}");
+    }
+
+    [Command("install")]
+    public void Install() {
+    }
+
+    [Command("clean")]
+    public void Clean() {
+        logger.ZLogInformation($"Cleaning");
     }
 }
 
@@ -40,7 +45,13 @@ public class Program {
         var app = ConsoleApp.Create().ConfigureLogging(static builder => {
             builder.ClearProviders()
                 .SetMinimumLevel(LogLevel.Trace)
-                .AddZLoggerConsole()
+                .AddZLoggerConsole(static options => {
+                    options.UsePlainTextFormatter(static formatter => {
+                        formatter.SetPrefixFormatter($"{0}|{1}| ", static (in MessageTemplate template, in LogInfo info) => template.Format(info.Timestamp, info.LogLevel));
+                        formatter.SetSuffixFormatter($" ({0})", static (in MessageTemplate template, in LogInfo info) => template.Format(info.Category));
+                        formatter.SetExceptionFormatter(static (writer, ex) => Utf8StringInterpolation.Utf8String.Format(writer, $"{ex.Message}"));
+                    });
+                })
                 .AddZLoggerFile("binget.log");
         });
         app.Add<Commands>();
