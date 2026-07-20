@@ -8,8 +8,8 @@ using System.IO;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Threading;
 using System;
+using System.IO.Compression;
 
 namespace BinGet;
 
@@ -41,7 +41,8 @@ public class PackageManager {
         return false;
     }
 
-    private async Task DownloadPackage(HttpClient httpClient, BinGetConfig config, string packageName, RepositoryConfig repositoryConfig) {
+    // TODO: Grab the manifest first and check to see if I need to grab a new version, add a flag to override this from the CLI
+    private async Task DownloadAndExtractPackage(HttpClient httpClient, BinGetConfig config, string packageName, RepositoryConfig repositoryConfig) {
         var url = $"{config.Url}{repositoryConfig.Id}/releases/latest";
         logger.ZLogInformation($"Downloading from: {url}");
 
@@ -64,13 +65,27 @@ public class PackageManager {
         downloadResponse.EnsureSuccessStatusCode();
 
         var zipPath = Path.Combine(config.Destination, fileName);
-        await using var input = await downloadResponse.Content.ReadAsStreamAsync();
-        await using var output = File.Create(zipPath);
-        using var bufferScope = new ArrayPoolScope<byte>(BufferSize);
+        await using (var input = await downloadResponse.Content.ReadAsStreamAsync()) {
+            await using (var output = File.Create(zipPath)) {
+                using var bufferScope = new ArrayPoolScope<byte>(BufferSize);
 
-        int bytesRead = 0;
-        while ((bytesRead = await input.ReadAsync(bufferScope.AsMemory())) > 0) {
-            await output.WriteAsync(bufferScope.AsMemory()[..bytesRead]);
+                int bytesRead = 0;
+                while ((bytesRead = await input.ReadAsync(bufferScope.AsMemory())) > 0) {
+                    await output.WriteAsync(bufferScope.AsMemory()[..bytesRead]);
+                }
+            }
+        }
+
+        try {
+            var extractionPath = Path.Combine(config.Destination, packageName);
+            await ZipFile.ExtractToDirectoryAsync(zipPath, extractionPath, true);
+            logger.ZLogInformation($"Finished extracting to: {extractionPath}");
+            // Need to write a manifest file
+        } catch (Exception err) {
+            logger.ZLogError(err, $"Failed to extract {zipPath}.\n");
+        } finally {
+            File.Delete(zipPath);
+            logger.ZLogInformation($"Removed temporary archive: {zipPath}");
         }
     }
 
@@ -90,7 +105,7 @@ public class PackageManager {
         while (it.MoveNext()) {
             (var packageName, var repositoryConfig) = it.Current;
             var packagePath = Path.Join(toml.Destination, packageName);
-            tasks.Add(DownloadPackage(httpClient, toml, packageName, repositoryConfig));
+            tasks.Add(DownloadAndExtractPackage(httpClient, toml, packageName, repositoryConfig));
         }
 
         await Task.WhenAll(tasks);

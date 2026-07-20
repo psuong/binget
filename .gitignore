@@ -6,3 +6,4 @@
 *.binlog
 .vs
 *.log
+packages
