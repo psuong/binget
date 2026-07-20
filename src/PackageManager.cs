@@ -1,4 +1,4 @@
-using ConsoleAppFramework;
+﻿using ConsoleAppFramework;
 using ZLogger;
 using Microsoft.Extensions.Logging;
 using BinGet.Data;
@@ -10,74 +10,43 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System;
 using System.IO.Compression;
+using System.Threading;
 
 namespace BinGet;
 
 public class PackageManager {
     private const string MozillaAgent = "Mozilla/5.0";
     private const int BufferSize = 8192;
-
+    private const int MaxDownloads = 4;
     private readonly ILogger<PackageManager> logger;
 
     public PackageManager(ILogger<PackageManager> logger) {
         this.logger = logger;
     }
 
-    private bool TryGetPackageUrl(JsonDocument jsonDoc, string pattern, string packageName, out string fileName, out string downloadUrl) {
+    private bool TryGetPackageInfo(JsonDocument jsonDoc, string pattern, string packageName, out PackageInfo packageInfo) {
         foreach (var asset in jsonDoc.RootElement.GetProperty("assets").EnumerateArray()) {
             var name = asset.GetProperty("name").GetString();
             var regex = new Regex(@$"{pattern}");
 
             if (regex.IsMatch(name)) {
                 logger.ZLogInformation($"Found asset {name}");
-                fileName = name;
-                downloadUrl = asset.GetProperty("browser_download_url").GetString();
+
+                asset.GetProperty("digest");
+                packageInfo = new PackageInfo(
+                    name,
+                    asset.GetProperty("browser_download_url").GetString());
                 return true;
             }
         }
         logger.ZLogError($"Failed to find an archive to download and extract for {packageName}");
-        fileName = string.Empty;
-        downloadUrl = string.Empty;
+        packageInfo = default;
         return false;
     }
 
-    // TODO: Grab the manifest first and check to see if I need to grab a new version, add a flag to override this from the CLI
-    private async Task DownloadAndExtractPackage(HttpClient httpClient, BinGetConfig config, string packageName, RepositoryConfig repositoryConfig) {
-        var url = $"{config.Url}{repositoryConfig.Id}/releases/latest";
-        logger.ZLogInformation($"Downloading from: {url}");
-
-        var response = await httpClient.GetStringAsync(url);
-        using var jsonDoc = JsonDocument.Parse(response);
-
-        if (!TryGetPackageUrl(
-                jsonDoc,
-                repositoryConfig.TargetPattern,
-                packageName,
-                out var fileName,
-                out var downloadUrl)) {
-            logger.ZLogCritical($"Failed to find asset for {packageName}");
-            return;
-        }
-
-        using var downloadResponse = await httpClient.GetAsync(
-            downloadUrl,
-            HttpCompletionOption.ResponseHeadersRead);
-        downloadResponse.EnsureSuccessStatusCode();
-
-        var zipPath = Path.Combine(config.Destination, fileName);
-        await using (var input = await downloadResponse.Content.ReadAsStreamAsync()) {
-            await using (var output = File.Create(zipPath)) {
-                using var bufferScope = new ArrayPoolScope<byte>(BufferSize);
-
-                int bytesRead = 0;
-                while ((bytesRead = await input.ReadAsync(bufferScope.AsMemory())) > 0) {
-                    await output.WriteAsync(bufferScope.AsMemory()[..bytesRead]);
-                }
-            }
-        }
-
+    private async Task ExtractArchive(string destination, string packageName, string zipPath) {
         try {
-            var extractionPath = Path.Combine(config.Destination, packageName);
+            var extractionPath = Path.Combine(destination, packageName);
             await ZipFile.ExtractToDirectoryAsync(zipPath, extractionPath, true);
             logger.ZLogInformation($"Finished extracting to: {extractionPath}");
             // Need to write a manifest file
@@ -86,6 +55,53 @@ public class PackageManager {
         } finally {
             File.Delete(zipPath);
             logger.ZLogInformation($"Removed temporary archive: {zipPath}");
+        }
+    }
+
+    // TODO: Grab the manifest first and check to see if I need to grab a new version, add a flag to override this from the CLI
+    private async Task DownloadAndExtractPackage(DownloadArgs downloadArgs) {
+        var (httpClient, config, repositoryConfig, packageName, sem) = downloadArgs;
+        var url = $"{config.Url}{repositoryConfig.Id}/releases/latest";
+        logger.ZLogInformation($"Downloading from: {url}");
+
+        try {
+            await sem.WaitAsync();
+
+            var response = await httpClient.GetStringAsync(url);
+            using var jsonDoc = JsonDocument.Parse(response);
+
+            if (!TryGetPackageInfo(
+                    jsonDoc,
+                    repositoryConfig.TargetPattern,
+                    packageName,
+                    out var packageInfo)) {
+                logger.ZLogCritical($"Failed to find asset for {packageName}");
+                return;
+            }
+
+            JsonElement digestElement = jsonDoc.RootElement.GetProperty("digest");
+            logger.ZLogInformation($"Digest: {digestElement.GetString()}");
+
+            using var downloadResponse = await httpClient.GetAsync(
+                packageInfo.DownloadUrl,
+                HttpCompletionOption.ResponseHeadersRead);
+            downloadResponse.EnsureSuccessStatusCode();
+
+            var zipPath = Path.Combine(config.Destination, packageInfo.FileName);
+            await using (var input = await downloadResponse.Content.ReadAsStreamAsync()) {
+                await using (var output = File.Create(zipPath)) {
+                    using var bufferScope = new ArrayPoolScope<byte>(BufferSize);
+
+                    int bytesRead = 0;
+                    while ((bytesRead = await input.ReadAsync(bufferScope.AsMemory())) > 0) {
+                        await output.WriteAsync(bufferScope.AsMemory()[..bytesRead]);
+                    }
+                }
+            }
+
+            await ExtractArchive(config.Destination, packageName, zipPath);
+        } finally {
+            sem.Release();
         }
     }
 
@@ -100,12 +116,13 @@ public class PackageManager {
         using var httpClient = new HttpClient();
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(MozillaAgent);
         var tasks = new List<Task>(toml.Repositories.Count);
+        var sem = new SemaphoreSlim(MaxDownloads, MaxDownloads);
 
         var it = toml.Repositories.GetEnumerator();
         while (it.MoveNext()) {
             (var packageName, var repositoryConfig) = it.Current;
             var packagePath = Path.Join(toml.Destination, packageName);
-            tasks.Add(DownloadAndExtractPackage(httpClient, toml, packageName, repositoryConfig));
+            tasks.Add(DownloadAndExtractPackage(new DownloadArgs(httpClient, toml, repositoryConfig, packageName, sem)));
         }
 
         await Task.WhenAll(tasks);

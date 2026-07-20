@@ -1,0 +1,6 @@
+[repository.{{ packageName }}]
+repository = {{ repository }}
+tag = {{ tag }}
+asset = {{ asset }}
+installed = {{ date }}
+sha256 = {{ sha256 }}
