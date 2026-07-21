@@ -2,5 +2,5 @@ package = "{{ packageName }}"
 repository = "{{ repository }}"
 tag = "{{ tag }}"
 asset = "{{ asset }}"
-sha256 = "{{ sha256 }}"
+checksum = "{{ checksum }}"
 installed = {{ date }}

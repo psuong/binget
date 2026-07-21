@@ -8,13 +8,25 @@ using Tomlyn.Serialization;
 
 namespace BinGet.Data;
 
+/// <summary>
+/// The C# object model for the configuration toml file.
+/// </summary>
 public sealed class BinGetConfig {
+    /// <summary>
+    /// The root url to fetch the packages from.
+    /// </summary>
     [TomlPropertyName("url")]
     public string Url { get; set; } = string.Empty;
 
+    /// <summary>
+    /// The location to write the packages to.
+    /// </summary>
     [TomlPropertyName("destination")]
     public string Destination { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Repository metadata.
+    /// </summary>
     [TomlPropertyName("repositories")]
     public Dictionary<string, RepositoryConfig> Repositories { get; set; }
 
@@ -44,10 +56,19 @@ public sealed class BinGetConfig {
     }
 }
 
+/// <summary>
+/// The C# object model for the repository toml configuration.
+/// </summary>
 public sealed class RepositoryConfig {
+    /// <summary>
+    /// The unique identifier for the repository.
+    /// </summary>
     [TomlPropertyName("id")]
     public string Id { get; set; } = string.Empty;
 
+    /// <summary>
+    /// A regex to search the pattern.
+    /// </summary>
     [TomlPropertyName("targetPattern")]
     public string TargetPattern { get; set; } = string.Empty;
 

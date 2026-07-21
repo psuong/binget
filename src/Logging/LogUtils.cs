@@ -12,6 +12,14 @@ public static class LogUtils {
     public const string LogFile = "binget.log";
 
     /// <summary>
+    /// Returns the path to the logfile.
+    /// </summary>
+    /// <returns>A path on the filesystem.</returns>
+    public static string GetLogPath() {
+        return Path.Join(Directory.GetCurrentDirectory(), LogFile);
+    }
+
+    /// <summary>
     /// A round robin logging backup utility. This moves the most recent
     /// log file to a backup and the previous log file to another backup.
     /// At most there will only be 2 backups.

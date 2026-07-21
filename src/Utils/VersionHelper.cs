@@ -1,8 +1,11 @@
-using System;
+﻿using System;
 using System.Runtime.CompilerServices;
 
 namespace BinGet.Utils;
 
+/// <summary>
+/// Utility to parse version numbers.
+/// </summary>
 public static class VersionHelper {
 
     /// <summary>

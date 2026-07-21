@@ -18,6 +18,7 @@ using System.Text;
 using Tomlyn;
 using BinGet.Utils;
 using Spectre.Console;
+using BinGet.Logging;
 
 namespace BinGet;
 
@@ -109,6 +110,13 @@ public class PackageManager {
     private async ValueTask<bool> ExtractArchiveAndGenerateManifest(ManifestArgs manifestArgs) {
         var status = true;
         try {
+            // First check if the downloaded archive has the same Checksum hash
+            using (var fs = File.OpenRead(manifestArgs.ZipPath)) {
+                if (!await HashUtils.CompareChecksum(manifestArgs.Checksum, fs, logger)) {
+                    return false;
+                }
+            }
+
             var extractionPath = Path.Join(manifestArgs.Destination, manifestArgs.PackageName);
             await ZipFile.ExtractToDirectoryAsync(manifestArgs.ZipPath, extractionPath, true);
             logger.ZLogInformation($"Finished extracting to: {extractionPath}");
@@ -193,7 +201,7 @@ public class PackageManager {
                 zipPath,
                 repositoryConfig.Id,
                 packageInfo.FileName,
-                packageInfo.Sha256,
+                packageInfo.Checksum,
                 packageInfo.Tag));
             pkgStatus = status ? PackageStatus.Installed : PackageStatus.Failed;
             progress.Description = status ? $"[green]✓ {packageName}[/]" : $"[red]✗ {repositoryConfig.Id}[/]";
@@ -259,6 +267,10 @@ public class PackageManager {
             summaryTable.AddRow(pkgName, pkgStatus.Format());
         }
         AnsiConsole.Write(summaryTable);
+
+        if (fail > 0) {
+            AnsiConsole.WriteLine($"Check the logfile for any errors. The log file is located at: {LogUtils.GetLogPath()}");
+        }
     }
 
     /// <summary>

@@ -10,6 +10,7 @@ on:
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/main'
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -18,7 +19,7 @@ jobs:
       - name: Set up .NET SDK
         uses: actions/setup-dotnet@v2
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '10.0.x'
 
       - name: Restore dependencies
         run: dotnet restore
@@ -42,4 +43,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-aot-build
-          path: ./bin/Release/net8.0/win-x64/publish/
+          path: ./bin/Release/net10.0/win-x64/publish/
