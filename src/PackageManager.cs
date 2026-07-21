@@ -13,6 +13,10 @@ using System.IO.Compression;
 using System.Threading;
 using System.Reflection;
 using Scriban;
+using Cysharp.IO;
+using System.Text;
+using Tomlyn;
+using BinGet.Utils;
 
 namespace BinGet;
 
@@ -52,6 +56,25 @@ public class PackageManager {
         return false;
     }
 
+    private async ValueTask<bool> CanDownloadAsset(string destination, string packageName, string newVersion) {
+        var manifestPath = Path.Join(destination, packageName, "manifest.toml");
+        if (File.Exists(manifestPath)) {
+            using var streamReader = new Utf8StreamReader(manifestPath, FileOpenMode.Throughput);
+            var text = Encoding.UTF8.GetString(await streamReader.ReadToEndAsync());
+            var manifest = TomlSerializer.Deserialize<ManifestConfig>(text, TomlManifestConfigContext.Default);
+
+            // Get the version
+            if (VersionHelper.TryParseVersion(manifest.Tag, out var existing) &&
+                VersionHelper.TryParseVersion(newVersion, out var downloaded)) {
+                logger.LogInformation($"Existing version: {existing}, New: {newVersion}");
+                return downloaded > existing;
+            }
+            return false;
+        }
+        // We did not find a manifest.toml in the package which means that we probably did not download the asset.
+        return true;
+    }
+
     private async Task ExtractArchiveAndGenerateManifest(ManifestArgs manifestArgs) {
         try {
             var extractionPath = Path.Join(manifestArgs.Destination, manifestArgs.PackageName);
@@ -89,6 +112,11 @@ public class PackageManager {
                     packageName,
                     out var packageInfo)) {
                 logger.ZLogCritical($"Failed to find asset for {packageName}");
+                return;
+            }
+
+            if (!await CanDownloadAsset(config.Destination, packageName, packageInfo.Tag)) {
+                logger.LogError($"Aborted download of: {packageName} due to an updated version.");
                 return;
             }
 
