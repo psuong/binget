@@ -4,10 +4,38 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>false</ImplicitUsings>
-    <PublishAot>true</PublishAot>
     <Nullable>disable</Nullable>
-    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <RootNamespace>BinGet</RootNamespace>
+    <FileVersion>2.0.0</FileVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <!-- Native AOT -->
+    <PublishAot>true</PublishAot>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>full</TrimMode>
+
+    <!-- Size optimizations -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <DebuggerSupport>false</DebuggerSupport>
+    <EventSourceSupport>false</EventSourceSupport>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+
+    <!-- Remove stack trace data -->
+    <StackTraceSupport>false</StackTraceSupport>
+    <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
+
+    <!-- Optimize for size -->
+    <OptimizationPreference>Size</OptimizationPreference>
+
+    <!-- Strip symbols/debug info -->
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <StripSymbols>true</StripSymbols>
+
+    <!-- AOT/trimming analysis -->
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,12 +54,4 @@
     <PackageReference Include="ZLogger" Version="2.5.10" />
   </ItemGroup>
 
-  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <DebugType>None</DebugType>
-    <DebugSymbols>false</DebugSymbols>
-    <StripSymbols>true</StripSymbols>
-    <PublishTrimmed>true</PublishTrimmed>
-    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
-    <TrimMode>full</TrimMode>
-  </PropertyGroup>
 </Project>
