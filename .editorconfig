@@ -168,3 +168,10 @@ csharp_style_allow_blank_line_after_token_in_conditional_expression_experimental
 csharp_style_allow_blank_line_after_token_in_arrow_expression_clause_experimental = true:silent
 csharp_style_implicit_object_creation_when_type_is_apparent = true:suggestion
 csharp_style_prefer_not_pattern = true:suggestion
+
+########################
+# Diagnostics Severity #
+########################
+dotnet_diagnostic.IDE0058.severity = none # Disable unused variables
+dotnet_diagnostic.IDE0130.severity = none # Disable namespace not matching folder structure
+dotnet_diagnostic.IDE0160.severity = none # Disable scoped namespace suggestions

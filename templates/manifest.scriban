@@ -1,0 +1,6 @@
+package = "{{ packageName }}"
+repository = "{{ repository }}"
+tag = "{{ tag }}"
+asset = "{{ asset }}"
+checksum = "{{ checksum }}"
+installed = {{ date }}

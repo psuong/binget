@@ -1,11 +1,16 @@
+###############
+# Directories #
+###############
 /bin
 /obj
+/.vs
+/.vscode
+/packages
 
-config.toml
+#########
+# Files #
+#########
+*.log*
+*.toml
 *.zip
 *.binlog
-dnSpy/
-lua/
-omnisharp/
-slang/
-tracy/
