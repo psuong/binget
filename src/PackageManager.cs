@@ -28,12 +28,14 @@ public class PackageManager {
     private readonly ILogger<PackageManager> logger;
     private readonly Template manifestTemplate;
     private readonly List<ProgressTask> progressTasks;
+    private readonly List<(string pkgName, PackageStatus pkgStatus)> summary;
 
     public PackageManager(ILogger<PackageManager> logger) {
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BinGet.templates.manifest.scriban");
         using var reader = new StreamReader(stream);
         manifestTemplate = Template.Parse(reader.ReadToEnd());
         progressTasks = new List<ProgressTask>(MaxDownloads);
+        summary = new List<(string, PackageStatus)>(MaxDownloads);
         this.logger = logger;
     }
 
@@ -134,6 +136,7 @@ public class PackageManager {
         var (httpClient, config, repositoryConfig, packageName, sem, taskId) = downloadArgs;
         var url = $"{config.Url}{repositoryConfig.Id}/releases/latest";
         logger.ZLogInformation($"Downloading from: {url}");
+        var pkgStatus = PackageStatus.NotStarted;
 
         try {
             // We only have a maximum # of downloads to not spam the REST endpoints.
@@ -148,20 +151,22 @@ public class PackageManager {
                     packageName,
                     out var packageInfo)) {
                 logger.ZLogCritical($"Failed to find asset for {packageName}");
+                pkgStatus = PackageStatus.Failed;
                 return;
             }
 
             // Reset the progress 
             var progress = progressTasks[taskId % MaxDownloads];
             progress.Value = 0;
-            progress.Description = $"[yellow]↓ {repositoryConfig.Id}[/]";
+            progress.Description = $"[yellow]↓ {packageName}[/]";
             progress.StartTask();
 
-            // if (!await CanDownloadAsset(config.Destination, packageName, packageInfo.Tag)) {
-            //     progress.Description = $"[grey]Skipped {repositoryConfig.Id}[/]";
-            //     progress.Value = 100;
-            //     return;
-            // }
+            if (!await CanDownloadAsset(config.Destination, packageName, packageInfo.Tag)) {
+                progress.Description = $"[grey]Skipped {packageName}[/]";
+                progress.Value = 100;
+                pkgStatus = PackageStatus.Skipped;
+                return;
+            }
 
             using var downloadResponse = await httpClient.GetAsync(
                 packageInfo.DownloadUrl,
@@ -191,9 +196,11 @@ public class PackageManager {
                 packageInfo.FileName,
                 packageInfo.Sha256,
                 packageInfo.Tag));
-            progress.Description = status ? $"[green]✓ {repositoryConfig.Id}[/]" : $"[red]✗ {repositoryConfig.Id}[/]";
+            pkgStatus = status ? PackageStatus.Installed : PackageStatus.Failed;
+            progress.Description = status ? $"[green]✓ {packageName}[/]" : $"[red]✗ {repositoryConfig.Id}[/]";
         } finally {
             sem.Release();
+            summary.Add((packageName, pkgStatus));
         }
     }
 
@@ -233,15 +240,25 @@ public class PackageManager {
                 }
                 await Task.WhenAll(tasks);
             });
+        var (installed, skipped, fail, unknown) = summary.CountStatus();
+        AnsiConsole.WriteLine($"Installed: {installed}, Skipped: {skipped}, Failed: {fail}");
+        var summaryTable = new Table()
+            .AddColumn("Package")
+            .AddColumn("Status");
+
+        for (int i = 0; i < summary.Count; i++) {
+            var (pkgName, pkgStatus) = summary[i];
+            summaryTable.AddRow(pkgName, pkgStatus.Format());
+        }
+        AnsiConsole.Write(summaryTable);
     }
 
     /// <summary>
     /// Removes any local packages that are not listed in the config file. Your config file is effectively your primary list.
     /// </summary>
     /// <param name="config">The configuration toml file that lists the packages.</param>
-    /// <param name="updatePath">Updates the path variables.</param>
     [Command("clean")]
-    public async Task Clean(string config, bool updatePath) {
+    public async Task Clean(string config) {
         var toml = await BinGetConfig.Load(config);
         if (!Directory.Exists(toml.Destination)) {
             logger.ZLogInformation($"Creating the directory at path {toml.Destination}");

@@ -1,4 +1,5 @@
-﻿using System.Net.Http;
+﻿using System.Collections.Generic;
+using System.Net.Http;
 using System.Threading;
 
 namespace BinGet.Data;
@@ -19,3 +20,47 @@ public readonly record struct DownloadArgs(
     string PackageName,
     SemaphoreSlim Semaphore,
     int TaskId);
+
+public enum PackageStatus {
+    NotStarted,
+    Installed,
+    Skipped,
+    Failed
+}
+
+public static class PackageStatusExtensions {
+    public static string Format(this PackageStatus status) {
+        return status switch {
+            PackageStatus.Installed => "[blue]✓ - Installed[/]",
+            PackageStatus.Skipped => "[grey]>> - Skipped[/]",
+            PackageStatus.Failed => "[red]✗ - Failed[/]",
+            _ => "[grey]? - Unknown[/]",
+        };
+    }
+
+    public static (int installed, int skipped, int failed, int unknown) CountStatus<T>(
+        this IReadOnlyList<(T, PackageStatus)> collection) {
+        int installed = 0;
+        int skipped = 0;
+        int failed = 0;
+        int unknown = 0;
+        for (int i = 0; i < collection.Count; i++) {
+            (var _, var status) = collection[i];
+            switch (status) {
+                case PackageStatus.NotStarted:
+                    unknown++;
+                    break;
+                case PackageStatus.Installed:
+                    installed++;
+                    break;
+                case PackageStatus.Skipped:
+                    skipped++;
+                    break;
+                case PackageStatus.Failed:
+                    failed++;
+                    break;
+            }
+        }
+        return (installed, skipped, failed, unknown);
+    }
+}
