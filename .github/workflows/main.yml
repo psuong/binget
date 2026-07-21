@@ -10,10 +10,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Set up .NET SDK
-        uses: actions/setup-dotnet@v2
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
 
@@ -29,11 +29,11 @@ jobs:
       - name: GH Release
         uses: softprops/action-gh-release@v2.2.1
         with:
-          files: ./bin/Release/net8.0/win-x64/publish/*
+          files: ./bin/Release/net10.0/win-x64/publish/*
           draft: false
           prerelease: false
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}          
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
 
       - name: Archive the build
         uses: actions/upload-artifact@v4
