@@ -52,7 +52,11 @@ public sealed class BinGetConfig {
         }
         using var streamReader = new Utf8StreamReader(path, FileOpenMode.Throughput);
         var text = await streamReader.ReadToEndAsync();
-        return TomlSerializer.Deserialize<BinGetConfig>(Encoding.UTF8.GetString(text), TomlBinGetConfigContext.Default);
+        var toml = TomlSerializer.Deserialize<BinGetConfig>(Encoding.UTF8.GetString(text), TomlBinGetConfigContext.Default);
+        if (toml.Repositories == null) {
+            toml.Repositories = new Dictionary<string, RepositoryConfig>();
+        }
+        return toml;
     }
 }
 
