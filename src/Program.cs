@@ -1,11 +1,13 @@
 ﻿using ConsoleAppFramework;
 using ZLogger;
 using Microsoft.Extensions.Logging;
+using BinGet.Logging;
 
 namespace BinGet;
 
-class Program {
+public class Program {
     public static void Main(string[] args) {
+        LogUtils.RotateLogFiles();
         var app = ConsoleApp.Create().ConfigureLogging(static builder => {
             builder.ClearProviders()
 #if DEBUG
@@ -13,7 +15,7 @@ class Program {
 #else
                 .SetMinimumLevel(LogLevel.Warning)
 #endif
-                .AddZLoggerFile("binget.log", static options => {
+                .AddZLoggerFile(LogUtils.LogFile, static options => {
                     options.UsePlainTextFormatter(static formatter => {
                         formatter.SetPrefixFormatter($"{0}|{1}| ", static (in MessageTemplate template, in LogInfo info) => template.Format(info.Timestamp, info.LogLevel));
                         formatter.SetSuffixFormatter($" ({0})", static (in MessageTemplate template, in LogInfo info) => template.Format(info.Category));
@@ -21,6 +23,7 @@ class Program {
                     });
                 });
         });
+
         app.Add<PackageManager>();
         app.Run(args);
     }

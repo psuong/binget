@@ -40,11 +40,11 @@ public static class PackageStatusExtensions {
 
     public static (int installed, int skipped, int failed, int unknown) CountStatus<T>(
         this IReadOnlyList<(T, PackageStatus)> collection) {
-        int installed = 0;
-        int skipped = 0;
-        int failed = 0;
-        int unknown = 0;
-        for (int i = 0; i < collection.Count; i++) {
+        var installed = 0;
+        var skipped = 0;
+        var failed = 0;
+        var unknown = 0;
+        for (var i = 0; i < collection.Count; i++) {
             (var _, var status) = collection[i];
             switch (status) {
                 case PackageStatus.NotStarted:
@@ -58,6 +58,8 @@ public static class PackageStatusExtensions {
                     break;
                 case PackageStatus.Failed:
                     failed++;
+                    break;
+                default:
                     break;
             }
         }

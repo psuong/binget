@@ -1,5 +1,7 @@
-using System;
+﻿using System;
 using Tomlyn.Serialization;
+
+namespace BinGet.Data;
 
 public sealed class ManifestConfig {
     [TomlPropertyName("packageName")]

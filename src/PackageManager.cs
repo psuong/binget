@@ -107,7 +107,7 @@ public class PackageManager {
     /// <param name="manifestArgs">Manifest info to be written to after extraction.</param>
     /// <returns>An awaitable task that represents a handle until the operations are done.</returns>
     private async ValueTask<bool> ExtractArchiveAndGenerateManifest(ManifestArgs manifestArgs) {
-        bool status = true;
+        var status = true;
         try {
             var extractionPath = Path.Join(manifestArgs.Destination, manifestArgs.PackageName);
             await ZipFile.ExtractToDirectoryAsync(manifestArgs.ZipPath, extractionPath, true);
@@ -155,7 +155,7 @@ public class PackageManager {
                 return;
             }
 
-            // Reset the progress 
+            // Reset the progress
             var progress = progressTasks[taskId % MaxDownloads];
             progress.Value = 0;
             progress.Description = $"[yellow]↓ {packageName}[/]";
@@ -175,20 +175,19 @@ public class PackageManager {
 
             var zipPath = Path.Combine(config.Destination, packageInfo.FileName);
             await using (var input = await downloadResponse.Content.ReadAsStreamAsync()) {
-                await using (var output = File.Create(zipPath)) {
-                    using var bufferScope = new ArrayPoolScope<byte>(BufferSize);
-                    var totalBytes = downloadResponse.Content.Headers.ContentLength ?? -1;
-                    int bytesRead = 0;
-                    int totalRead = 0;
-                    while ((bytesRead = await input.ReadAsync(bufferScope.AsMemory())) > 0) {
-                        await output.WriteAsync(bufferScope.AsMemory()[..bytesRead]);
-                        totalRead += bytesRead;
-                        progress.Value = ((double)totalRead) / totalBytes * 100.0;
-                    }
+                await using var output = File.Create(zipPath);
+                using var bufferScope = new ArrayPoolScope<byte>(BufferSize);
+                var totalBytes = downloadResponse.Content.Headers.ContentLength ?? -1;
+                var bytesRead = 0;
+                var totalRead = 0;
+                while ((bytesRead = await input.ReadAsync(bufferScope.AsMemory())) > 0) {
+                    await output.WriteAsync(bufferScope.AsMemory()[..bytesRead]);
+                    totalRead += bytesRead;
+                    progress.Value = ((double)totalRead) / totalBytes * 100.0;
                 }
             }
 
-            bool status = await ExtractArchiveAndGenerateManifest(new ManifestArgs(
+            var status = await ExtractArchiveAndGenerateManifest(new ManifestArgs(
                 config.Destination,
                 packageName,
                 zipPath,
@@ -208,7 +207,7 @@ public class PackageManager {
     /// Installs/updates packages from a configuration file.
     /// </summary>
     /// <param name="config">The primary configuration file.</param>
-    [Command("install")]
+    [Command("install|update|i|u")]
     public async Task Install(string config) {
         var toml = await BinGetConfig.Load(config);
         if (!Directory.Exists(toml.Destination)) {
@@ -226,7 +225,7 @@ public class PackageManager {
                 var sem = new SemaphoreSlim(MaxDownloads, MaxDownloads);
 
                 // If there are less than the MaxDownloads then I don't need to spawn the MaxDownload ProgressBars
-                for (int i = 0; i < Math.Min(toml.Repositories.Count, MaxDownloads); i++) {
+                for (var i = 0; i < Math.Min(toml.Repositories.Count, MaxDownloads); i++) {
                     progressTasks.Add(ctx.AddTask("Package Install", false, 100));
                 }
 
@@ -235,18 +234,27 @@ public class PackageManager {
                 while (it.MoveNext()) {
                     (var packageName, var repositoryConfig) = it.Current;
                     var packagePath = Path.Join(toml.Destination, packageName);
-                    tasks.Add(DownloadAndExtractPackage(new DownloadArgs(httpClient, toml, repositoryConfig, packageName, sem, count)));
+                    var task = DownloadAndExtractPackage(new DownloadArgs(
+                        httpClient,
+                        toml,
+                        repositoryConfig,
+                        packageName,
+                        sem,
+                        count));
+                    tasks.Add(task);
                     count++;
                 }
                 await Task.WhenAll(tasks);
             });
+
+        // Draw the summary
         var (installed, skipped, fail, unknown) = summary.CountStatus();
         AnsiConsole.WriteLine($"Installed: {installed}, Skipped: {skipped}, Failed: {fail}");
         var summaryTable = new Table()
             .AddColumn("Package")
             .AddColumn("Status");
 
-        for (int i = 0; i < summary.Count; i++) {
+        for (var i = 0; i < summary.Count; i++) {
             var (pkgName, pkgStatus) = summary[i];
             summaryTable.AddRow(pkgName, pkgStatus.Format());
         }
@@ -257,7 +265,7 @@ public class PackageManager {
     /// Removes any local packages that are not listed in the config file. Your config file is effectively your primary list.
     /// </summary>
     /// <param name="config">The configuration toml file that lists the packages.</param>
-    [Command("clean")]
+    [Command("clean|c")]
     public async Task Clean(string config) {
         var toml = await BinGetConfig.Load(config);
         if (!Directory.Exists(toml.Destination)) {
@@ -273,11 +281,42 @@ public class PackageManager {
             packagePaths.Remove(packagePath);
         }
 
-        var remainingIt = packagePaths.GetEnumerator();
-        while (remainingIt.MoveNext()) {
-            logger.ZLogInformation($"Removing package at: {remainingIt.Current}");
-            Directory.Delete(remainingIt.Current);
-            // TODO: Update the path variables
+        if (packagePaths.Count > 0) {
+            var removedTable = new Table().AddColumn("Removed Package Paths");
+            var remainingIt = packagePaths.GetEnumerator();
+            while (remainingIt.MoveNext()) {
+                logger.ZLogInformation($"Removing package at: {remainingIt.Current}");
+                removedTable.AddRow(remainingIt.Current);
+                Directory.Delete(remainingIt.Current);
+            }
+            AnsiConsole.Write(removedTable);
+        } else {
+            AnsiConsole.WriteLine("No packages to remove.");
         }
+    }
+
+    [Command("list|l")]
+    public async Task ListPackages(string config) {
+        var summary = new Table().AddColumns("Package", "Status");
+        var toml = await BinGetConfig.Load(config);
+
+        var subDirectories = Directory.GetDirectories(toml.Destination);
+        var installedPkgs = new HashSet<string>(subDirectories);
+
+        var it = toml.Repositories.GetEnumerator();
+        while (it.MoveNext()) {
+            var (packageName, _) = it.Current;
+            var packagePath = Path.Join(toml.Destination, packageName);
+            summary.AddRow(packageName,
+                Directory.Exists(packagePath) ? "[green]✓ Installed[/]" : "[red]✗ Uninstalled[/]");
+            installedPkgs.Remove(packagePath);
+        }
+
+        var installedIt = installedPkgs.GetEnumerator();
+        while (installedIt.MoveNext()) {
+            var pkgName = Path.GetFileName(installedIt.Current);
+            summary.AddRow(pkgName, "[purple]? Unlisted in configuration file.[/]");
+        }
+        AnsiConsole.Write(summary);
     }
 }

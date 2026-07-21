@@ -1,9 +1,16 @@
+###############
+# Directories #
+###############
 /bin
 /obj
+/.vs
+/.vscode
+/packages
 
+#########
+# Files #
+#########
+*.log*
 *.toml
 *.zip
 *.binlog
-.vs
-*.log
-packages

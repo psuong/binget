@@ -1,4 +1,4 @@
-namespace BinGet.Data;
+﻿namespace BinGet.Data;
 
 /// <summary>
 /// Stores metadata from the a json response object about the package downloaded.
@@ -8,7 +8,7 @@ namespace BinGet.Data;
 /// <param name="Sha256">The Sha256 hash of the archive.</param>
 /// <param name="Tag">The semantic versioning number.</param>
 public readonly record struct PackageInfo(
-    string FileName, 
+    string FileName,
     string DownloadUrl,
     string Sha256,
     string Tag) {

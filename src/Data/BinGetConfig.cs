@@ -11,20 +11,22 @@ namespace BinGet.Data;
 public sealed class BinGetConfig {
     [TomlPropertyName("url")]
     public string Url { get; set; } = string.Empty;
+
     [TomlPropertyName("destination")]
     public string Destination { get; set; } = string.Empty;
+
     [TomlPropertyName("repositories")]
     public Dictionary<string, RepositoryConfig> Repositories { get; set; }
 
     public override string ToString() {
-        StringBuilder sb = new StringBuilder(256);
+        var sb = new StringBuilder(256);
         sb
             .Append("Url: ")
             .AppendLine(Url)
             .Append("Destination: ")
             .AppendLine(Destination);
 
-        Dictionary<string, RepositoryConfig>.Enumerator it = Repositories != null ? Repositories.GetEnumerator() : default;
+        var it = Repositories != null ? Repositories.GetEnumerator() : default;
         while (it.MoveNext()) {
             sb.AppendLine(it.Current.Key)
                 .AppendLine(it.Current.Value.ToString());
@@ -36,8 +38,8 @@ public sealed class BinGetConfig {
         if (!File.Exists(path)) {
             throw new FileNotFoundException($"The config file: {path} does not exist!");
         }
-        using Utf8StreamReader streamReader = new Utf8StreamReader(path, FileOpenMode.Throughput);
-        byte[] text = await streamReader.ReadToEndAsync();
+        using var streamReader = new Utf8StreamReader(path, FileOpenMode.Throughput);
+        var text = await streamReader.ReadToEndAsync();
         return TomlSerializer.Deserialize<BinGetConfig>(Encoding.UTF8.GetString(text), TomlBinGetConfigContext.Default);
     }
 }
@@ -45,6 +47,7 @@ public sealed class BinGetConfig {
 public sealed class RepositoryConfig {
     [TomlPropertyName("id")]
     public string Id { get; set; } = string.Empty;
+
     [TomlPropertyName("targetPattern")]
     public string TargetPattern { get; set; } = string.Empty;
 

@@ -5,8 +5,6 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>false</ImplicitUsings>
     <PublishAot>true</PublishAot>
-    <PublishTrimmed>true</PublishTrimmed>
-    <TrimMode>full</TrimMode>
     <Nullable>disable</Nullable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <RootNamespace>BinGet</RootNamespace>
@@ -27,4 +25,13 @@
     <PackageReference Include="Utf8StreamReader" Version="1.3.2" />
     <PackageReference Include="ZLogger" Version="2.5.10" />
   </ItemGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <StripSymbols>true</StripSymbols>
+    <PublishTrimmed>true</PublishTrimmed>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <TrimMode>full</TrimMode>
+  </PropertyGroup>
 </Project>
