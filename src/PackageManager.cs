@@ -34,6 +34,14 @@ public class PackageManager {
         this.logger = logger;
     }
 
+    /// <summary>
+    /// Atempts to get the package info from a json response.
+    /// </summary>
+    /// <param name="jsonDoc">The json response object.</param>
+    /// <param name="pattern">The regex pattern.</param>
+    /// <param name="packageName">The name of the package.</param>
+    /// <param name="packageInfo">A compact object with all of the package info.</param>
+    /// <returns>True, if the information is found.</returns>
     private bool TryGetPackageInfo(JsonDocument jsonDoc, string pattern, string packageName, out PackageInfo packageInfo) {
         foreach (var asset in jsonDoc.RootElement.GetProperty("assets").EnumerateArray()) {
             var name = asset.GetProperty("name").GetString();
@@ -56,6 +64,13 @@ public class PackageManager {
         return false;
     }
 
+    /// <summary>
+    /// Checks if the package downloaded should be updated if the version downloaded is more recent than the current version.
+    /// </summary>
+    /// <param name="destination">The directory where the package should be downloaded.</param>
+    /// <param name="packageName">The name of the package.</param>
+    /// <param name="newVersion">The new version of the package.</param>
+    /// <returns>True if newVersion > existingVersion.</returns>
     private async ValueTask<bool> CanDownloadAsset(string destination, string packageName, string newVersion) {
         var manifestPath = Path.Join(destination, packageName, "manifest.toml");
         if (File.Exists(manifestPath)) {
@@ -66,15 +81,26 @@ public class PackageManager {
             // Get the version
             if (VersionHelper.TryParseVersion(manifest.Tag, out var existing) &&
                 VersionHelper.TryParseVersion(newVersion, out var downloaded)) {
-                logger.LogInformation($"Existing version: {existing}, New: {newVersion}");
-                return downloaded > existing;
+
+                if (downloaded > existing) {
+                    return true;
+                } else {
+                    logger.ZLogInformation($"Aborted download of {packageName}, the existing version: {existing} is more recent than the downloaded version: {downloaded}");
+                    return false;
+                }
             }
+            logger.ZLogInformation($"Failed to parse the versions for {packageName}");
             return false;
         }
         // We did not find a manifest.toml in the package which means that we probably did not download the asset.
         return true;
     }
 
+    /// <summary>
+    /// Attemps to extract the archive to a destination directory. Generates a manifest after extraction.
+    /// </summary>
+    /// <param name="manifestArgs">Manifest info to be written to after extraction.</param>
+    /// <returns>An awaitable task that represents a handle until the operations are done.</returns>
     private async Task ExtractArchiveAndGenerateManifest(ManifestArgs manifestArgs) {
         try {
             var extractionPath = Path.Join(manifestArgs.Destination, manifestArgs.PackageName);
@@ -83,7 +109,7 @@ public class PackageManager {
             // Need to write/overwrite a manifest file
             var manifestPath = Path.Join(manifestArgs.Destination, manifestArgs.PackageName, "manifest.toml");
             await File.WriteAllTextAsync(
-                manifestPath, 
+                manifestPath,
                 await manifestTemplate.RenderAsync(new TemplateContext(manifestArgs.ToScriptObject())));
         } catch (Exception err) {
             logger.ZLogError(err, $"Failed to extract {manifestArgs.ZipPath}.\n");
@@ -93,7 +119,11 @@ public class PackageManager {
         }
     }
 
-    // TODO: Grab the manifest first and check to see if I need to grab a new version, add a flag to override this from the CLI
+    /// <summary>
+    /// Atempts to download the package and generate the package. This is the primary method of the package manager.
+    /// </summary>
+    /// <param name="downloadArgs">Metadata describing where to get the package.</param>
+    /// <returns>An awaitable Task representing when the operation is done.</returns>
     private async Task DownloadAndExtractPackage(DownloadArgs downloadArgs) {
         var (httpClient, config, repositoryConfig, packageName, sem) = downloadArgs;
         var url = $"{config.Url}{repositoryConfig.Id}/releases/latest";
@@ -116,7 +146,6 @@ public class PackageManager {
             }
 
             if (!await CanDownloadAsset(config.Destination, packageName, packageInfo.Tag)) {
-                logger.LogError($"Aborted download of: {packageName} due to an updated version.");
                 return;
             }
 
@@ -138,18 +167,22 @@ public class PackageManager {
             }
 
             await ExtractArchiveAndGenerateManifest(new ManifestArgs(
-                config.Destination, 
-                packageName, 
-                zipPath, 
-                repositoryConfig.Id, 
-                packageInfo.FileName, 
-                packageInfo.Sha256, 
+                config.Destination,
+                packageName,
+                zipPath,
+                repositoryConfig.Id,
+                packageInfo.FileName,
+                packageInfo.Sha256,
                 packageInfo.Tag));
         } finally {
             sem.Release();
         }
     }
 
+    /// <summary>
+    /// Installs/updates packages from a configuration file.
+    /// </summary>
+    /// <param name="config">The primary configuration file.</param>
     [Command("install")]
     public async Task Install(string config) {
         var toml = await BinGetConfig.Load(config);
