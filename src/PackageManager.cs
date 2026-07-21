@@ -299,7 +299,7 @@ public class PackageManager {
             while (remainingIt.MoveNext()) {
                 logger.ZLogInformation($"Removing package at: {remainingIt.Current}");
                 removedTable.AddRow(remainingIt.Current);
-                Directory.Delete(remainingIt.Current);
+                Directory.Delete(remainingIt.Current, true);
             }
             AnsiConsole.Write(removedTable);
         } else {
