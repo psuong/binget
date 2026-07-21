@@ -17,6 +17,7 @@ using Cysharp.IO;
 using System.Text;
 using Tomlyn;
 using BinGet.Utils;
+using Spectre.Console;
 
 namespace BinGet;
 
@@ -26,11 +27,13 @@ public class PackageManager {
     private const int MaxDownloads = 4;
     private readonly ILogger<PackageManager> logger;
     private readonly Template manifestTemplate;
+    private readonly List<ProgressTask> progressTasks;
 
     public PackageManager(ILogger<PackageManager> logger) {
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BinGet.templates.manifest.scriban");
         using var reader = new StreamReader(stream);
         manifestTemplate = Template.Parse(reader.ReadToEnd());
+        progressTasks = new List<ProgressTask>(MaxDownloads);
         this.logger = logger;
     }
 
@@ -101,7 +104,8 @@ public class PackageManager {
     /// </summary>
     /// <param name="manifestArgs">Manifest info to be written to after extraction.</param>
     /// <returns>An awaitable task that represents a handle until the operations are done.</returns>
-    private async Task ExtractArchiveAndGenerateManifest(ManifestArgs manifestArgs) {
+    private async ValueTask<bool> ExtractArchiveAndGenerateManifest(ManifestArgs manifestArgs) {
+        bool status = true;
         try {
             var extractionPath = Path.Join(manifestArgs.Destination, manifestArgs.PackageName);
             await ZipFile.ExtractToDirectoryAsync(manifestArgs.ZipPath, extractionPath, true);
@@ -113,10 +117,12 @@ public class PackageManager {
                 await manifestTemplate.RenderAsync(new TemplateContext(manifestArgs.ToScriptObject())));
         } catch (Exception err) {
             logger.ZLogError(err, $"Failed to extract {manifestArgs.ZipPath}.\n");
+            status = false;
         } finally {
             File.Delete(manifestArgs.ZipPath);
             logger.ZLogInformation($"Removed temporary archive: {manifestArgs.ZipPath}");
         }
+        return status;
     }
 
     /// <summary>
@@ -125,7 +131,7 @@ public class PackageManager {
     /// <param name="downloadArgs">Metadata describing where to get the package.</param>
     /// <returns>An awaitable Task representing when the operation is done.</returns>
     private async Task DownloadAndExtractPackage(DownloadArgs downloadArgs) {
-        var (httpClient, config, repositoryConfig, packageName, sem) = downloadArgs;
+        var (httpClient, config, repositoryConfig, packageName, sem, taskId) = downloadArgs;
         var url = $"{config.Url}{repositoryConfig.Id}/releases/latest";
         logger.ZLogInformation($"Downloading from: {url}");
 
@@ -145,9 +151,17 @@ public class PackageManager {
                 return;
             }
 
-            if (!await CanDownloadAsset(config.Destination, packageName, packageInfo.Tag)) {
-                return;
-            }
+            // Reset the progress 
+            var progress = progressTasks[taskId % MaxDownloads];
+            progress.Value = 0;
+            progress.Description = $"[yellow]↓ {repositoryConfig.Id}[/]";
+            progress.StartTask();
+
+            // if (!await CanDownloadAsset(config.Destination, packageName, packageInfo.Tag)) {
+            //     progress.Description = $"[grey]Skipped {repositoryConfig.Id}[/]";
+            //     progress.Value = 100;
+            //     return;
+            // }
 
             using var downloadResponse = await httpClient.GetAsync(
                 packageInfo.DownloadUrl,
@@ -158,15 +172,18 @@ public class PackageManager {
             await using (var input = await downloadResponse.Content.ReadAsStreamAsync()) {
                 await using (var output = File.Create(zipPath)) {
                     using var bufferScope = new ArrayPoolScope<byte>(BufferSize);
-
+                    var totalBytes = downloadResponse.Content.Headers.ContentLength ?? -1;
                     int bytesRead = 0;
+                    int totalRead = 0;
                     while ((bytesRead = await input.ReadAsync(bufferScope.AsMemory())) > 0) {
                         await output.WriteAsync(bufferScope.AsMemory()[..bytesRead]);
+                        totalRead += bytesRead;
+                        progress.Value = ((double)totalRead) / totalBytes * 100.0;
                     }
                 }
             }
 
-            await ExtractArchiveAndGenerateManifest(new ManifestArgs(
+            bool status = await ExtractArchiveAndGenerateManifest(new ManifestArgs(
                 config.Destination,
                 packageName,
                 zipPath,
@@ -174,6 +191,7 @@ public class PackageManager {
                 packageInfo.FileName,
                 packageInfo.Sha256,
                 packageInfo.Tag));
+            progress.Description = status ? $"[green]✓ {repositoryConfig.Id}[/]" : $"[red]✗ {repositoryConfig.Id}[/]";
         } finally {
             sem.Release();
         }
@@ -191,19 +209,30 @@ public class PackageManager {
             Directory.CreateDirectory(toml.Destination);
         }
 
-        using var httpClient = new HttpClient();
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(MozillaAgent);
-        var tasks = new List<Task>(toml.Repositories.Count);
-        var sem = new SemaphoreSlim(MaxDownloads, MaxDownloads);
+        await AnsiConsole.Progress()
+            .AutoRefresh(true)
+            .HideCompleted(false)
+            .StartAsync(async (ctx) => {
+                using var httpClient = new HttpClient();
+                httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(MozillaAgent);
+                var tasks = new List<Task>(toml.Repositories.Count);
+                var sem = new SemaphoreSlim(MaxDownloads, MaxDownloads);
 
-        var it = toml.Repositories.GetEnumerator();
-        while (it.MoveNext()) {
-            (var packageName, var repositoryConfig) = it.Current;
-            var packagePath = Path.Join(toml.Destination, packageName);
-            tasks.Add(DownloadAndExtractPackage(new DownloadArgs(httpClient, toml, repositoryConfig, packageName, sem)));
-        }
+                // If there are less than the MaxDownloads then I don't need to spawn the MaxDownload ProgressBars
+                for (int i = 0; i < Math.Min(toml.Repositories.Count, MaxDownloads); i++) {
+                    progressTasks.Add(ctx.AddTask("Package Install", false, 100));
+                }
 
-        await Task.WhenAll(tasks);
+                var it = toml.Repositories.GetEnumerator();
+                var count = 0;
+                while (it.MoveNext()) {
+                    (var packageName, var repositoryConfig) = it.Current;
+                    var packagePath = Path.Join(toml.Destination, packageName);
+                    tasks.Add(DownloadAndExtractPackage(new DownloadArgs(httpClient, toml, repositoryConfig, packageName, sem, count)));
+                    count++;
+                }
+                await Task.WhenAll(tasks);
+            });
     }
 
     /// <summary>
