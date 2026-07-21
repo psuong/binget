@@ -9,6 +9,7 @@
     <TrimMode>full</TrimMode>
     <Nullable>disable</Nullable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <RootNamespace>BinGet</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>

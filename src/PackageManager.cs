@@ -11,6 +11,8 @@ using System.Text.RegularExpressions;
 using System;
 using System.IO.Compression;
 using System.Threading;
+using System.Reflection;
+using Scriban;
 
 namespace BinGet;
 
@@ -19,8 +21,12 @@ public class PackageManager {
     private const int BufferSize = 8192;
     private const int MaxDownloads = 4;
     private readonly ILogger<PackageManager> logger;
+    private readonly Template manifestTemplate;
 
     public PackageManager(ILogger<PackageManager> logger) {
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BinGet.templates.manifest.scriban");
+        using var reader = new StreamReader(stream);
+        manifestTemplate = Template.Parse(reader.ReadToEnd());
         this.logger = logger;
     }
 
@@ -46,17 +52,21 @@ public class PackageManager {
         return false;
     }
 
-    private async Task ExtractArchive(string destination, string packageName, string zipPath) {
+    private async Task ExtractArchiveAndGenerateManifest(ManifestArgs manifestArgs) {
         try {
-            var extractionPath = Path.Combine(destination, packageName);
-            await ZipFile.ExtractToDirectoryAsync(zipPath, extractionPath, true);
+            var extractionPath = Path.Join(manifestArgs.Destination, manifestArgs.PackageName);
+            await ZipFile.ExtractToDirectoryAsync(manifestArgs.ZipPath, extractionPath, true);
             logger.ZLogInformation($"Finished extracting to: {extractionPath}");
-            // Need to write a manifest file
+            // Need to write/overwrite a manifest file
+            var manifestPath = Path.Join(manifestArgs.Destination, manifestArgs.PackageName, "manifest.toml");
+            await File.WriteAllTextAsync(
+                manifestPath, 
+                await manifestTemplate.RenderAsync(new TemplateContext(manifestArgs.ToScriptObject())));
         } catch (Exception err) {
-            logger.ZLogError(err, $"Failed to extract {zipPath}.\n");
+            logger.ZLogError(err, $"Failed to extract {manifestArgs.ZipPath}.\n");
         } finally {
-            File.Delete(zipPath);
-            logger.ZLogInformation($"Removed temporary archive: {zipPath}");
+            File.Delete(manifestArgs.ZipPath);
+            logger.ZLogInformation($"Removed temporary archive: {manifestArgs.ZipPath}");
         }
     }
 
@@ -67,6 +77,7 @@ public class PackageManager {
         logger.ZLogInformation($"Downloading from: {url}");
 
         try {
+            // We only have a maximum # of downloads to not spam the REST endpoints.
             await sem.WaitAsync();
 
             var response = await httpClient.GetStringAsync(url);
@@ -98,7 +109,14 @@ public class PackageManager {
                 }
             }
 
-            await ExtractArchive(config.Destination, packageName, zipPath);
+            await ExtractArchiveAndGenerateManifest(new ManifestArgs(
+                config.Destination, 
+                packageName, 
+                zipPath, 
+                repositoryConfig.Id, 
+                packageInfo.FileName, 
+                packageInfo.Sha256, 
+                packageInfo.Tag));
         } finally {
             sem.Release();
         }
