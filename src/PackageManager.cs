@@ -307,6 +307,10 @@ public class PackageManager {
         }
     }
 
+    /// <summary>
+    /// Displays all packages in the destination directory and the config file.
+    /// </summary>
+    /// <param name="config">The path to the configuration file.</param>
     [Command("list|l")]
     public async Task ListPackages(string config) {
         var summary = new Table().AddColumns("Package", "Status");
