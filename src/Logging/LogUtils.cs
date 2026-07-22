@@ -26,7 +26,16 @@ public static class LogUtils {
     /// </summary>
     public static void RotateLogFiles() {
         var cwd = Directory.GetCurrentDirectory();
-        var logPath = Path.Join(cwd, LogFile);
+        var logPath = GetLogPath();
+
+        if (File.Exists(logPath)) {
+            // Early out because the log file has not been written to so ZLogger can
+
+            var info = new FileInfo(logPath);
+            if (info.Length == 0) {
+                return;
+            }
+        }
 
         var backup1 = Path.Join(cwd, LogFile + ".1");
         var backup2 = Path.Join(cwd, LogFile + ".2");

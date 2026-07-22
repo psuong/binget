@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using System;
 using System.IO;
 using System.Security.Cryptography;
@@ -20,9 +20,9 @@ public static partial class HashUtils {
     /// <param name="original">The original checksum. The string must be in a format like: {hashType}:{hashValue}.</param>
     /// <param name="stream">The piece of memory to check against.</param>
     /// <param name="logger">The logger to log any issues during the checksum.</param>
-    /// <returns>True, if the hashes match between the <paramref name="original"/> and the <paramref name="stream"/>. 
+    /// <returns>True, if the hashes match between the <paramref name="original"/> and the <paramref name="stream"/>.
     /// False, if not and if the <paramref name="original"/> cannot be parsed.</returns>
-    /// <exception cref="NotSupportedException">Currently supported hash functions are MD1, SHA1, SHA256, SHA384, and SHA512. 
+    /// <exception cref="NotSupportedException">Currently supported hash functions are MD1, SHA1, SHA256, SHA384, and SHA512.
     /// If the hash you're looking for is not supported, this method will throw.</exception>
     public static async ValueTask<bool> CompareChecksum<T>(string original, Stream stream, ILogger<T> logger) {
         var match = HashPattern.Match(original);

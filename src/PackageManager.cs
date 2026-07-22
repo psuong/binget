@@ -1,24 +1,23 @@
-﻿using ConsoleAppFramework;
-using ZLogger;
+﻿using BinGet.Data;
+using BinGet.Logging;
+using BinGet.Pool;
+using BinGet.Utils;
+using ConsoleAppFramework;
+using Cysharp.IO;
 using Microsoft.Extensions.Logging;
-using BinGet.Data;
-using System.Threading.Tasks;
+using Spectre.Console;
+using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System;
-using System.IO.Compression;
 using System.Threading;
-using System.Reflection;
-using Scriban;
-using Cysharp.IO;
-using System.Text;
+using System.Threading.Tasks;
 using Tomlyn;
-using BinGet.Utils;
-using Spectre.Console;
-using BinGet.Logging;
+using ZLogger;
 
 namespace BinGet;
 
@@ -27,16 +26,11 @@ public class PackageManager {
     private const int BufferSize = 8192;
     private const int MaxDownloads = 4;
     private readonly ILogger<PackageManager> logger;
-    private readonly Template manifestTemplate;
     private readonly List<ProgressTask> progressTasks;
-    private readonly List<(string pkgName, PackageStatus pkgStatus)> summary;
+    private (string pkgName, PackageStatus pkgStatus)[] summary;
 
     public PackageManager(ILogger<PackageManager> logger) {
-        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BinGet.templates.manifest.scriban");
-        using var reader = new StreamReader(stream);
-        manifestTemplate = Template.Parse(reader.ReadToEnd());
         progressTasks = new List<ProgressTask>(MaxDownloads);
-        summary = new List<(string, PackageStatus)>(MaxDownloads);
         this.logger = logger;
     }
 
@@ -48,26 +42,25 @@ public class PackageManager {
     /// <param name="packageName">The name of the package.</param>
     /// <param name="packageInfo">A compact object with all of the package info.</param>
     /// <returns>True, if the information is found.</returns>
-    private bool TryGetPackageInfo(JsonDocument jsonDoc, string pattern, string packageName, out PackageInfo packageInfo) {
-        foreach (var asset in jsonDoc.RootElement.GetProperty("assets").EnumerateArray()) {
+    private PackageStatus TryGetPackageInfo(JsonDocument jsonDoc, string pattern, string packageName, out PackageInfo packageInfo) {
+        var it = jsonDoc.RootElement.GetProperty("assets").EnumerateArray();
+        while (it.MoveNext()) {
+            var asset = it.Current;
             var name = asset.GetProperty("name").GetString();
             var regex = new Regex(@$"{pattern}");
-
             if (regex.IsMatch(name)) {
-                logger.ZLogInformation($"Found asset {name}");
-
                 packageInfo = new PackageInfo(
                     name,
                     asset.GetProperty("browser_download_url").GetString(),
                     asset.GetProperty("digest").GetString(),
                     jsonDoc.RootElement.GetProperty("tag_name").GetString());
                 logger.ZLogInformation($"Package Info: {packageInfo}");
-                return true;
+                return PackageStatus.Success;
             }
         }
         logger.ZLogError($"Failed to find an archive to download and extract for {packageName}");
         packageInfo = default;
-        return false;
+        return PackageStatus.PackageNotFound;
     }
 
     /// <summary>
@@ -76,8 +69,10 @@ public class PackageManager {
     /// <param name="destination">The directory where the package should be downloaded.</param>
     /// <param name="packageName">The name of the package.</param>
     /// <param name="newVersion">The new version of the package.</param>
-    /// <returns>True if newVersion > existingVersion.</returns>
-    private async ValueTask<bool> CanDownloadAsset(string destination, string packageName, string newVersion) {
+    /// <returns>Success, if the downloaded version > installed version, otherwise VersionRegression will be returned.
+    /// If the versions are the same, Skipped will be returned.
+    /// </returns>
+    private async ValueTask<PackageStatus> CanDownloadAsset(string destination, string packageName, string newVersion) {
         var manifestPath = Path.Join(destination, packageName, "manifest.toml");
         if (File.Exists(manifestPath)) {
             using var streamReader = new Utf8StreamReader(manifestPath, FileOpenMode.Throughput);
@@ -89,17 +84,20 @@ public class PackageManager {
                 VersionHelper.TryParseVersion(newVersion, out var downloaded)) {
 
                 if (downloaded > existing) {
-                    return true;
+                    return PackageStatus.Success;
+                } else if (downloaded == existing) {
+                    logger.ZLogInformation($"Aborted download of {packageName}, the existing version: {existing} is the same as the downloaded version: {downloaded}");
+                    return PackageStatus.VersionSkipped;
                 } else {
                     logger.ZLogInformation($"Aborted download of {packageName}, the existing version: {existing} is more recent than the downloaded version: {downloaded}");
-                    return false;
+                    return PackageStatus.VersionRegression;
                 }
             }
             logger.ZLogInformation($"Failed to parse the versions for {packageName}");
-            return false;
+            return PackageStatus.UnparseableVersion;
         }
         // We did not find a manifest.toml in the package which means that we probably did not download the asset.
-        return true;
+        return PackageStatus.Success;
     }
 
     /// <summary>
@@ -107,13 +105,13 @@ public class PackageManager {
     /// </summary>
     /// <param name="manifestArgs">Manifest info to be written to after extraction.</param>
     /// <returns>An awaitable task that represents a handle until the operations are done.</returns>
-    private async ValueTask<bool> ExtractArchiveAndGenerateManifest(ManifestArgs manifestArgs) {
-        var status = true;
+    private async ValueTask<PackageStatus> ExtractArchiveAndGenerateManifest(ManifestArgs manifestArgs) {
+        PackageStatus status = PackageStatus.Success;
         try {
             // First check if the downloaded archive has the same Checksum hash
             using (var fs = File.OpenRead(manifestArgs.ZipPath)) {
                 if (!await HashUtils.CompareChecksum(manifestArgs.Checksum, fs, logger)) {
-                    return false;
+                    return PackageStatus.ChecksumMismatch;
                 }
             }
 
@@ -122,12 +120,14 @@ public class PackageManager {
             logger.ZLogInformation($"Finished extracting to: {extractionPath}");
             // Need to write/overwrite a manifest file
             var manifestPath = Path.Join(manifestArgs.Destination, manifestArgs.PackageName, "manifest.toml");
-            await File.WriteAllTextAsync(
-                manifestPath,
-                await manifestTemplate.RenderAsync(new TemplateContext(manifestArgs.ToScriptObject())));
+            using var _ = new ObjectPoolScope<StringBuilder>(
+                static () => new StringBuilder(256),
+                static sb => sb.Clear(),
+                out var sb);
+            manifestArgs.Format(sb, manifestPath);
         } catch (Exception err) {
+            status = PackageStatus.ExtractionFailure;
             logger.ZLogError(err, $"Failed to extract {manifestArgs.ZipPath}.\n");
-            status = false;
         } finally {
             File.Delete(manifestArgs.ZipPath);
             logger.ZLogInformation($"Removed temporary archive: {manifestArgs.ZipPath}");
@@ -140,11 +140,11 @@ public class PackageManager {
     /// </summary>
     /// <param name="downloadArgs">Metadata describing where to get the package.</param>
     /// <returns>An awaitable Task representing when the operation is done.</returns>
-    private async Task DownloadAndExtractPackage(DownloadArgs downloadArgs) {
+    private async Task<(string name, PackageStatus status)> DownloadAndExtractPackage(DownloadArgs downloadArgs) {
         var (httpClient, config, repositoryConfig, packageName, sem, taskId) = downloadArgs;
         var url = $"{config.Url}{repositoryConfig.Id}/releases/latest";
         logger.ZLogInformation($"Downloading from: {url}");
-        var pkgStatus = PackageStatus.NotStarted;
+        var (pkgName, pkgStatus) = (packageName, PackageStatus.Success);
 
         try {
             // We only have a maximum # of downloads to not spam the REST endpoints.
@@ -153,14 +153,13 @@ public class PackageManager {
             var response = await httpClient.GetStringAsync(url);
             using var jsonDoc = JsonDocument.Parse(response);
 
-            if (!TryGetPackageInfo(
+            if ((pkgStatus = TryGetPackageInfo(
                     jsonDoc,
                     repositoryConfig.TargetPattern,
                     packageName,
-                    out var packageInfo)) {
+                    out var packageInfo)) != PackageStatus.Success) {
                 logger.ZLogCritical($"Failed to find asset for {packageName}");
-                pkgStatus = PackageStatus.Failed;
-                return;
+                return (pkgName, pkgStatus);
             }
 
             // Reset the progress
@@ -169,11 +168,10 @@ public class PackageManager {
             progress.Description = $"[yellow]↓ {packageName}[/]";
             progress.StartTask();
 
-            if (!await CanDownloadAsset(config.Destination, packageName, packageInfo.Tag)) {
+            if ((pkgStatus = await CanDownloadAsset(config.Destination, packageName, packageInfo.Tag)) != PackageStatus.Success) {
                 progress.Description = $"[grey]Skipped {packageName}[/]";
                 progress.Value = 100;
-                pkgStatus = PackageStatus.Skipped;
-                return;
+                return (pkgName, pkgStatus);
             }
 
             using var downloadResponse = await httpClient.GetAsync(
@@ -195,7 +193,7 @@ public class PackageManager {
                 }
             }
 
-            var status = await ExtractArchiveAndGenerateManifest(new ManifestArgs(
+            pkgStatus = await ExtractArchiveAndGenerateManifest(new ManifestArgs(
                 config.Destination,
                 packageName,
                 zipPath,
@@ -203,12 +201,11 @@ public class PackageManager {
                 packageInfo.FileName,
                 packageInfo.Checksum,
                 packageInfo.Tag));
-            pkgStatus = status ? PackageStatus.Installed : PackageStatus.Failed;
-            progress.Description = status ? $"[green]✓ {packageName}[/]" : $"[red]✗ {repositoryConfig.Id}[/]";
+            progress.Description = pkgStatus.IsSuccess() ? $"[green]✓ {packageName}[/]" : $"[red]✗ {pkgName}[/]";
         } finally {
             sem.Release();
-            summary.Add((packageName, pkgStatus));
         }
+        return (pkgName, pkgStatus);
     }
 
     /// <summary>
@@ -229,7 +226,7 @@ public class PackageManager {
             .StartAsync(async (ctx) => {
                 using var httpClient = new HttpClient();
                 httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(MozillaAgent);
-                var tasks = new List<Task>(toml.Repositories.Count);
+                var tasks = new List<Task<(string name, PackageStatus status)>>(toml.Repositories.Count);
                 var sem = new SemaphoreSlim(MaxDownloads, MaxDownloads);
 
                 // If there are less than the MaxDownloads then I don't need to spawn the MaxDownload ProgressBars
@@ -252,23 +249,23 @@ public class PackageManager {
                     tasks.Add(task);
                     count++;
                 }
-                await Task.WhenAll(tasks);
+                summary = await Task.WhenAll(tasks);
             });
 
+        var result = summary.CountStatus();
         // Draw the summary
-        var (installed, skipped, fail, unknown) = summary.CountStatus();
-        AnsiConsole.WriteLine($"Installed: {installed}, Skipped: {skipped}, Failed: {fail}");
+        AnsiConsole.WriteLine($"Installed: {result.installed}, Failed: {result.failed}, Skipped: {result.skipped}");
         var summaryTable = new Table()
             .AddColumn("Package")
             .AddColumn("Status");
 
-        for (var i = 0; i < summary.Count; i++) {
+        for (var i = 0; i < summary.Length; i++) {
             var (pkgName, pkgStatus) = summary[i];
             summaryTable.AddRow(pkgName, pkgStatus.Format());
         }
         AnsiConsole.Write(summaryTable);
 
-        if (fail > 0) {
+        if (result.failed > 0) {
             AnsiConsole.WriteLine($"Check the logfile for any errors. The log file is located at: {LogUtils.GetLogPath()}");
         }
     }
@@ -294,12 +291,12 @@ public class PackageManager {
         }
 
         if (packagePaths.Count > 0) {
-            var removedTable = new Table().AddColumn("Removed Package Paths");
+            var removedTable = new Table().AddColumn("Package").AddColumn("Path Removed");
             var remainingIt = packagePaths.GetEnumerator();
             while (remainingIt.MoveNext()) {
                 logger.ZLogInformation($"Removing package at: {remainingIt.Current}");
-                removedTable.AddRow(remainingIt.Current);
-                Directory.Delete(remainingIt.Current);
+                removedTable.AddRow(Path.GetFileName(remainingIt.Current), $"[red]{remainingIt.Current}[/]");
+                Directory.Delete(remainingIt.Current, true);
             }
             AnsiConsole.Write(removedTable);
         } else {

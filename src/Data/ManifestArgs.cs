@@ -1,6 +1,9 @@
-﻿using Scriban.Runtime;
+﻿using BinGet.Pool;
+using BinGet.Templates;
 using System;
 using System.Globalization;
+using System.IO;
+using System.Text;
 
 namespace BinGet.Data;
 
@@ -21,15 +24,19 @@ public readonly record struct ManifestArgs(
     string Repository,
     string Asset,
     string Checksum,
-    string TagName) {
-    public readonly ScriptObject ToScriptObject() {
-        return new ScriptObject {
-            ["packageName"] = PackageName,
-            ["repository"] = Repository,
-            ["tag"] = TagName,
-            ["asset"] = Asset,
-            ["date"] = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
-            ["checksum"] = Checksum
-        };
+    string TagName) : ITemplate {
+
+    public async void Format(StringBuilder stringBuilder, string path) {
+        using var _ = new ObjectPoolScope<StringBuilder>(
+            static () => new StringBuilder(256),
+            static sb => sb.Clear(),
+            out var sb);
+        sb.Append("package = ").Append('"').Append(PackageName).Append('"').AppendLine();
+        sb.Append("repository = ").Append('"').Append(Repository).Append('"').AppendLine();
+        sb.Append("tag = ").Append('"').Append(TagName).Append('"').AppendLine();
+        sb.Append("asset = ").Append('"').Append(Asset).Append('"').AppendLine();
+        sb.Append("checksum = ").Append('"').Append(Checksum).Append('"').AppendLine();
+        sb.Append("installed = ").Append(DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture)).AppendLine();
+        await File.WriteAllTextAsync(path, sb.ToString());
     }
 }

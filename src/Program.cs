@@ -1,7 +1,7 @@
-﻿using ConsoleAppFramework;
-using ZLogger;
+﻿using BinGet.Logging;
+using ConsoleAppFramework;
 using Microsoft.Extensions.Logging;
-using BinGet.Logging;
+using ZLogger;
 
 namespace BinGet;
 
