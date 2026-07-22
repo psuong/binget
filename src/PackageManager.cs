@@ -11,14 +11,13 @@ using System.Text.RegularExpressions;
 using System;
 using System.IO.Compression;
 using System.Threading;
-using System.Reflection;
-using Scriban;
 using Cysharp.IO;
 using System.Text;
 using Tomlyn;
 using BinGet.Utils;
 using Spectre.Console;
 using BinGet.Logging;
+using BinGet.Pool;
 
 namespace BinGet;
 
@@ -27,14 +26,10 @@ public class PackageManager {
     private const int BufferSize = 8192;
     private const int MaxDownloads = 4;
     private readonly ILogger<PackageManager> logger;
-    private readonly Template manifestTemplate;
     private readonly List<ProgressTask> progressTasks;
     private (string pkgName, PackageStatus pkgStatus)[] summary;
 
     public PackageManager(ILogger<PackageManager> logger) {
-        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BinGet.templates.manifest.scriban");
-        using var reader = new StreamReader(stream);
-        manifestTemplate = Template.Parse(reader.ReadToEnd());
         progressTasks = new List<ProgressTask>(MaxDownloads);
         this.logger = logger;
     }
@@ -88,8 +83,7 @@ public class PackageManager {
 
                 if (downloaded > existing) {
                     return PackageStatus.Success;
-                }
-                else if (downloaded == existing) {
+                } else if (downloaded == existing) {
                     logger.ZLogInformation($"Aborted download of {packageName}, the existing version: {existing} is the same as the downloaded version: {downloaded}");
                     return PackageStatus.Skipped;
                 } else {
@@ -124,9 +118,11 @@ public class PackageManager {
             logger.ZLogInformation($"Finished extracting to: {extractionPath}");
             // Need to write/overwrite a manifest file
             var manifestPath = Path.Join(manifestArgs.Destination, manifestArgs.PackageName, "manifest.toml");
-            await File.WriteAllTextAsync(
-                manifestPath,
-                await manifestTemplate.RenderAsync(new TemplateContext(manifestArgs.ToScriptObject())));
+            using var _ = new ObjectPoolScope<StringBuilder>(
+                static () => new StringBuilder(256),
+                static sb => sb.Clear(),
+                out var sb);
+            manifestArgs.Format(sb, manifestPath);
         } catch (Exception err) {
             status = PackageStatus.ExtractionFailure;
             logger.ZLogError(err, $"Failed to extract {manifestArgs.ZipPath}.\n");

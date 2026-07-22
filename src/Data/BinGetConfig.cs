@@ -1,4 +1,5 @@
-﻿using Cysharp.IO;
+﻿using BinGet.Pool;
+using Cysharp.IO;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -31,9 +32,11 @@ public sealed class BinGetConfig {
     public Dictionary<string, RepositoryConfig> Repositories { get; set; }
 
     public override string ToString() {
-        var sb = new StringBuilder(256);
-        sb
-            .Append("Url: ")
+        using var _ = new ObjectPoolScope<StringBuilder>(
+            static () => new StringBuilder(256),
+            static sb => sb.Clear(),
+            out var sb);
+        sb.Append("Url: ")
             .AppendLine(Url)
             .Append("Destination: ")
             .AppendLine(Destination);
