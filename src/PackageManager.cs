@@ -1,23 +1,23 @@
-﻿using ConsoleAppFramework;
-using ZLogger;
-using Microsoft.Extensions.Logging;
-using BinGet.Data;
-using System.Threading.Tasks;
-using System.Collections.Generic;
-using System.IO;
-using System.Net.Http;
-using System.Text.Json;
-using System.Text.RegularExpressions;
-using System;
-using System.IO.Compression;
-using System.Threading;
-using Cysharp.IO;
-using System.Text;
-using Tomlyn;
-using BinGet.Utils;
-using Spectre.Console;
+﻿using BinGet.Data;
 using BinGet.Logging;
 using BinGet.Pool;
+using BinGet.Utils;
+using ConsoleAppFramework;
+using Cysharp.IO;
+using Microsoft.Extensions.Logging;
+using Spectre.Console;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using Tomlyn;
+using ZLogger;
 
 namespace BinGet;
 
@@ -69,7 +69,9 @@ public class PackageManager {
     /// <param name="destination">The directory where the package should be downloaded.</param>
     /// <param name="packageName">The name of the package.</param>
     /// <param name="newVersion">The new version of the package.</param>
-    /// <returns>True if newVersion > existingVersion.</returns>
+    /// <returns>Success, if the downloaded version > installed version, otherwise VersionRegression will be returned.
+    /// If the versions are the same, Skipped will be returned.
+    /// </returns>
     private async ValueTask<PackageStatus> CanDownloadAsset(string destination, string packageName, string newVersion) {
         var manifestPath = Path.Join(destination, packageName, "manifest.toml");
         if (File.Exists(manifestPath)) {
