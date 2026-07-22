@@ -29,6 +29,8 @@ public static class LogUtils {
         var logPath = GetLogPath();
 
         if (File.Exists(logPath)) {
+            // Early out because the log file has not been written to so ZLogger can
+
             var info = new FileInfo(logPath);
             if (info.Length == 0) {
                 return;

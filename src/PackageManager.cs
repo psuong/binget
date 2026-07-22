@@ -87,7 +87,7 @@ public class PackageManager {
                     return PackageStatus.Success;
                 } else if (downloaded == existing) {
                     logger.ZLogInformation($"Aborted download of {packageName}, the existing version: {existing} is the same as the downloaded version: {downloaded}");
-                    return PackageStatus.Skipped;
+                    return PackageStatus.VersionSkipped;
                 } else {
                     logger.ZLogInformation($"Aborted download of {packageName}, the existing version: {existing} is more recent than the downloaded version: {downloaded}");
                     return PackageStatus.VersionRegression;
