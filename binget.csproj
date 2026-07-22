@@ -6,8 +6,8 @@
     <ImplicitUsings>false</ImplicitUsings>
     <Nullable>disable</Nullable>
     <RootNamespace>BinGet</RootNamespace>
-    <InformationalVersion>2.0.0.0</InformationalVersion>
-    <FileVersion>2.0.0</FileVersion>
+    <InformationalVersion>2.0.1.0</InformationalVersion>
+    <FileVersion>2.0.1</FileVersion>
     <Company>psuong</Company>
     <Copyright>MIT Licensed</Copyright>
   </PropertyGroup>
