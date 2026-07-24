@@ -13,7 +13,7 @@ public class Program {
 #if DEBUG
                 .SetMinimumLevel(LogLevel.Trace)
 #else
-                .SetMinimumLevel(LogLevel.Warning)
+                .SetMinimumLevel(LogLevel.Information)
 #endif
                 .AddZLoggerFile(LogUtils.LogFile, static options => {
                     options.UsePlainTextFormatter(static formatter => {

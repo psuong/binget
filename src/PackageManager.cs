@@ -4,6 +4,7 @@ using BinGet.Pool;
 using BinGet.Utils;
 using ConsoleAppFramework;
 using Cysharp.IO;
+using FileTypeChecker.Extensions;
 using Microsoft.Extensions.Logging;
 using Spectre.Console;
 using System;
@@ -101,22 +102,23 @@ public class PackageManager {
     }
 
     /// <summary>
-    /// Attemps to extract the archive to a destination directory. Generates a manifest after extraction.
+    /// Attempts to extract the archive to a destination directory. Generates a manifest after extraction.
     /// </summary>
     /// <param name="manifestArgs">Manifest info to be written to after extraction.</param>
+    /// <param name="securityLevel">The security level on checksum requirements.</param>
     /// <returns>An awaitable task that represents a handle until the operations are done.</returns>
-    private async ValueTask<PackageStatus> ExtractArchiveAndGenerateManifest(ManifestArgs manifestArgs) {
+    private async ValueTask<PackageStatus> ExtractArchiveAndGenerateManifest(ManifestArgs manifestArgs, SecurityLevels securityLevel) {
         PackageStatus status = PackageStatus.Success;
         try {
             // First check if the downloaded archive has the same Checksum hash
-            using (var fs = File.OpenRead(manifestArgs.ZipPath)) {
-                if (!await HashUtils.CompareChecksum(manifestArgs.Checksum, fs, logger)) {
+            using (var fs = File.OpenRead(manifestArgs.DownloadedPath)) {
+                if (!await HashUtils.CompareChecksum(manifestArgs.Checksum, fs, logger, securityLevel)) {
                     return PackageStatus.ChecksumMismatch;
                 }
             }
 
             var extractionPath = Path.Join(manifestArgs.Destination, manifestArgs.PackageName);
-            await ZipFile.ExtractToDirectoryAsync(manifestArgs.ZipPath, extractionPath, true);
+            await ZipFile.ExtractToDirectoryAsync(manifestArgs.DownloadedPath, extractionPath, true);
             logger.ZLogInformation($"Finished extracting to: {extractionPath}");
             // Need to write/overwrite a manifest file
             var manifestPath = Path.Join(manifestArgs.Destination, manifestArgs.PackageName, "manifest.toml");
@@ -127,12 +129,43 @@ public class PackageManager {
             manifestArgs.Format(sb, manifestPath);
         } catch (Exception err) {
             status = PackageStatus.ExtractionFailure;
-            logger.ZLogError(err, $"Failed to extract {manifestArgs.ZipPath}.\n");
+            logger.ZLogError(err, $"Failed to extract {manifestArgs.DownloadedPath}.\n");
         } finally {
-            File.Delete(manifestArgs.ZipPath);
-            logger.ZLogInformation($"Removed temporary archive: {manifestArgs.ZipPath}");
+            File.Delete(manifestArgs.DownloadedPath);
+            logger.ZLogInformation($"Removed temporary archive: {manifestArgs.DownloadedPath}");
         }
         return status;
+    }
+
+    /// <summary>
+    /// Moves the executable to the package directory and writes the manifest.toml.
+    /// </summary>
+    /// <param name="manifestArgs">Manifest info to be written to after extraction.</param>
+    /// <param name="securityLevel">The security level on checksum requirements.</param>
+    /// <returns></returns>
+    private async ValueTask<PackageStatus> MoveExecutableAndGenerateManifest(ManifestArgs manifestArgs, SecurityLevels securityLevel) {
+        // First check if the downloaded archive has the same Checksum hash
+        using (var fs = File.OpenRead(manifestArgs.DownloadedPath)) {
+            if (!await HashUtils.CompareChecksum(manifestArgs.Checksum, fs, logger, securityLevel)) {
+                return PackageStatus.ChecksumMismatch;
+            }
+            fs.Close();
+        }
+
+        var packagePath = Path.Join(manifestArgs.Destination, manifestArgs.PackageName);
+        Directory.CreateDirectory(packagePath);
+        var destinationPath = Path.Join(packagePath, Path.GetFileName(manifestArgs.DownloadedPath));
+        File.Move(manifestArgs.DownloadedPath, destinationPath);
+        logger.ZLogInformation($"Moving executable to: {destinationPath}");
+
+        // Now generate the manifest.
+        var manifestPath = Path.Join(manifestArgs.Destination, manifestArgs.PackageName, "manifest.toml");
+        using var _ = new ObjectPoolScope<StringBuilder>(
+            static () => new StringBuilder(256),
+            static sb => sb.Clear(),
+            out var sb);
+        manifestArgs.Format(sb, manifestPath);
+        return PackageStatus.Success;
     }
 
     /// <summary>
@@ -179,9 +212,9 @@ public class PackageManager {
                 HttpCompletionOption.ResponseHeadersRead);
             downloadResponse.EnsureSuccessStatusCode();
 
-            var zipPath = Path.Combine(config.Destination, packageInfo.FileName);
+            var downloadPath = Path.Combine(config.Destination, packageInfo.FileName);
             await using (var input = await downloadResponse.Content.ReadAsStreamAsync()) {
-                await using var output = File.Create(zipPath);
+                await using var output = File.Create(downloadPath);
                 using var bufferScope = new ArrayPoolScope<byte>(BufferSize);
                 var totalBytes = downloadResponse.Content.Headers.ContentLength ?? -1;
                 var bytesRead = 0;
@@ -193,14 +226,32 @@ public class PackageManager {
                 }
             }
 
-            pkgStatus = await ExtractArchiveAndGenerateManifest(new ManifestArgs(
+            var manifest = new ManifestArgs(
                 config.Destination,
                 packageName,
-                zipPath,
+                downloadPath,
                 repositoryConfig.Id,
                 packageInfo.FileName,
                 packageInfo.Checksum,
-                packageInfo.Tag));
+                packageInfo.Tag);
+
+            var (isArchive, isExec) = (false, false);
+            using (var fs = File.OpenRead(downloadPath)) {
+                if (await fs.IsArchiveAsync()) {
+                    isArchive = true;
+                } else if (await fs.IsExecutableAsync()) {
+                    isExec = true;
+                }
+            }
+            logger.ZLogInformation($"Attempting to install package: {packageName}.");
+
+            if (isArchive) {
+                logger.ZLogInformation($"Downloaded an archive.");
+                pkgStatus = await ExtractArchiveAndGenerateManifest(manifest, downloadArgs.Security);
+            } else if (isExec) {
+                logger.ZLogInformation($"Downloaded an exe.");
+                pkgStatus = await MoveExecutableAndGenerateManifest(manifest, downloadArgs.Security);
+            }
             progress.Description = pkgStatus.IsSuccess() ? $"[green]✓ {packageName}[/]" : $"[red]✗ {pkgName}[/]";
         } finally {
             sem.Release();

@@ -18,4 +18,6 @@ public readonly record struct DownloadArgs(
     RepositoryConfig RepositoryConfig,
     string PackageName,
     SemaphoreSlim Semaphore,
-    int TaskId);
+    int TaskId) {
+    public SecurityLevels Security => (SecurityLevels)BinGetConfig.SecurityLevel;
+};

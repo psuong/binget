@@ -26,6 +26,12 @@ public sealed class BinGetConfig {
     public string Destination { get; set; } = string.Empty;
 
     /// <summary>
+    /// Is a checksum verification required? By default, this object will require strict checksum verifications.
+    /// </summary>
+    [TomlPropertyName("security_level")]
+    public int SecurityLevel { get; set; } = 2;
+
+    /// <summary>
     /// Repository metadata.
     /// </summary>
     [TomlPropertyName("repositories")]
